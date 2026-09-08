@@ -162,6 +162,7 @@ GameObject:
   - component: {fileID: 330585545}
   - component: {fileID: 330585544}
   - component: {fileID: 330585547}
+  - component: {fileID: 330585548}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -236,8 +237,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.24083972, y: -0.26122668, z: 0.06748285, w: -0.9323106}
-  m_LocalPosition: {x: -15.482689, y: 9.361664, z: -20.301598}
+  m_LocalRotation: {x: -0.0031506051, y: -0.30285573, z: 0.0010021405, w: -0.95303065}
+  m_LocalPosition: {x: 54.9, y: 0.48, z: 74.6}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -287,6 +288,20 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &330585548
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 330585543}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eb76e033e79150c4099c66d3301eac5f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  moveSpeed: 5
+  mouseSensitivity: 2
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -503,7 +518,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1734573794}
-  - component: {fileID: 1734573795}
+  - component: {fileID: 1734573796}
   m_Layer: 0
   m_Name: Forest
   m_TagString: Untagged
@@ -526,7 +541,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1734573795
+--- !u!114 &1734573796
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -535,57 +550,48 @@ MonoBehaviour:
   m_GameObject: {fileID: 1734573793}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: dd9c8ad01db7d364b9635cfcbc7b7f6a, type: 3}
+  m_Script: {fileID: 11500000, guid: 37692907c2a3f044893715c48558e827, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: '::'
-  area: {x: 50, y: 50}
+  m_EditorClassIdentifier: Assembly-CSharp::ChunkedForestGenerator
+  area: {x: 200, y: 200}
+  chunk: 20
   groundMaterial: {fileID: 2100000, guid: 2f32dcb38f78e5e41be6b34f98967872, type: 2}
   cellSize: 5
-  octaves: 4
-  frequency: 2
-  amplitude: 1
-  _trees:
+  trees:
   - mesh: {fileID: 4300000, guid: 6bebb995c31e14e4b83091a70b505bcb, type: 2}
-    mats:
+    material:
     - {fileID: 2100000, guid: a26cb674e1886a5448ccf13899114f89, type: 2}
     - {fileID: 2100000, guid: 3ec7a16f82fb78b459f2a19b6a3338a8, type: 2}
     scale: {x: 1, y: 1, z: 1}
   - mesh: {fileID: 4300000, guid: 6bebb995c31e14e4b83091a70b505bcb, type: 2}
-    mats:
+    material:
     - {fileID: 2100000, guid: 872b21ea46211f24fbe538eadf3300fe, type: 2}
     - {fileID: 2100000, guid: ac7d102bbd747724cbe99bd160562df8, type: 2}
     scale: {x: 1, y: 1, z: 1}
   - mesh: {fileID: 4300000, guid: 3a314d7a39c18064faf5ea4560eb6ee7, type: 2}
-    mats:
+    material:
     - {fileID: 2100000, guid: 46c236dc01ac52741a0d32528b28db7c, type: 2}
     - {fileID: 2100000, guid: 5ff95f0f1fd529640b743c4ff9d70fe4, type: 2}
     scale: {x: 1, y: 1, z: 1}
-  treesFrequency: 3
-  _grass:
+  treeDensity: 2
+  treesCullDist: 60
+  grasses:
   - mesh: {fileID: 4300000, guid: 2e8a7ac3f03ba7c48be39039a2e59985, type: 2}
-    mats:
+    material:
     - {fileID: 2100000, guid: 53e88f2e6e60e4446a3801dd4b5f57da, type: 2}
-    scale: {x: 4, y: 2, z: 1}
+    scale: {x: 1, y: 1, z: 1}
   - mesh: {fileID: 4300000, guid: 2e8a7ac3f03ba7c48be39039a2e59985, type: 2}
-    mats:
+    material:
     - {fileID: 2100000, guid: 4737222981e41cf40b722471411a4f13, type: 2}
-    scale: {x: 4, y: 2, z: 1}
+    scale: {x: 1, y: 1, z: 1}
   - mesh: {fileID: 4300000, guid: 2e8a7ac3f03ba7c48be39039a2e59985, type: 2}
-    mats:
+    material:
     - {fileID: 2100000, guid: 9f42fcba9e0210c42a2f8c06e7483b0d, type: 2}
-    scale: {x: 4, y: 2, z: 1}
-  grassFrequency: 0.3
-  grassCullDistance: 60
-  enableSway: 1
-  windDirection: {x: 1, y: 0.3}
-  windStrength: 1
-  windSpeed: 0.6
-  gustiness: 0.35
-  gustSpeed: 0.15
-  treeSwayAmount: 3
-  treeSwaySpeedMultiplier: 1
-  grassSwayAmount: 10
-  grassSwaySpeedMultiplier: 2.2
+    scale: {x: 1, y: 1, z: 1}
+  grassDensity: 0.3
+  grassCullDist: 30
+  swayAngle: 25
+  _frustumCulling: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

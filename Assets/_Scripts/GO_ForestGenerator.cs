@@ -1,285 +1,232 @@
 using UnityEngine;
 using Sirenix.OdinInspector;
-using System;
 using System.Collections.Generic;
+using System;
 using Random = UnityEngine.Random;
+using Debug = UnityEngine.Debug;
+using System.Diagnostics;
 
 public class GO_ForestGenerator : MonoBehaviour
 {
-    [Serializable]
-    private struct Tree
+    private class Chunk
     {
-        public GameObject prefab;
-        public Vector3 scale;
+        public Vector3 center;
+        public GameObject rootObject;
+        public List<Transform> instanceTransforms = new List<Transform>();
     }
 
-    [Serializable]
-    private struct Grass
-    {
-        public GameObject prefab;
-        public Vector3 scale;
-    }
-
-    // Tracks the data needed to re-derive an animated rotation every frame
-    // for a spawned instance, without having to read the transform back
-    // (float precision drift) or run a MonoBehaviour per object.
-    private struct SwayInstance
-    {
-        public Transform transform;
-        public float baseYaw;   // random yaw chosen at spawn time
-        public float phase;     // per-instance time offset so sway is desynced
-        public float windScale; // per-instance multiplier
-    }
-
-    public Vector2Int area;
+    public Vector2Int area = new Vector2Int(100, 100);
+    public int chunk = 20;
 
     [Title("Ground")]
     public Material groundMaterial;
+    public float cellSize = 5;
 
     [Title("Trees")]
-    [SerializeField] private Tree[] _trees;
-    public float treesFrequency = 2.0f;
+    [SerializeField] private GameObject[] treePrefabs;
+    public float treeDensity = 1.0f;
+    public float treesCullDist = 60.0f;
 
     [Title("Grass")]
-    [SerializeField] private Grass[] _grass;
-    public float grassFrequency = 0.2f;
+    [SerializeField] private GameObject[] grassPrefabs;
+    public float grassDensity = 2;
+    public float grassCullDist = 60.0f;
+    public float swayAngle = 25.0f;
 
-    [Title("Containers")]
-    [Tooltip("Optional. If left empty, this transform is used as the parent for spawned objects.")]
-    [SerializeField] private Transform _groundContainer;
-    [SerializeField] private Transform _treeContainer;
-    [SerializeField] private Transform _grassContainer;
+    [Title("Debug")]
+    [SerializeField] private bool _frustumCulling = true;
 
-    [Title("Wind / Sway")]
-    public bool enableSway = true;
-    [Tooltip("Direction the wind blows in, XZ plane. Doesn't need to be normalized.")]
-    public Vector2 windDirection = new Vector2(1f, 0.3f);
-    [Tooltip("Overall wind strength multiplier.")]
-    public float windStrength = 1.0f;
-    [Tooltip("How fast the base wind cycle oscillates.")]
-    public float windSpeed = 0.6f;
-    [Tooltip("Adds a slower, larger gust on top of the base sway.")]
-    [Range(0f, 1f)] public float gustiness = 0.35f;
-    public float gustSpeed = 0.15f;
+    private Chunk[] _chunks;
+    private Chunk[] _grassChunks;
+    private Vector3 _cameraPos;
 
-    [Title("Tree Sway")]
-    [Tooltip("Max tilt angle in degrees for trees.")]
-    public float treeSwayAmount = 3f;
-    public float treeSwaySpeedMultiplier = 1f;
+    private MeshFilter _groundFilter;
+    private MeshRenderer _groundRenderer;
 
-    [Title("Grass Sway")]
-    [Tooltip("Max tilt angle in degrees for grass.")]
-    public float grassSwayAmount = 10f;
-    public float grassSwaySpeedMultiplier = 2.2f;
-
-    private GameObject _groundObject;
-    private readonly List<GameObject> _spawnedTrees = new List<GameObject>();
-    private readonly List<GameObject> _spawnedGrass = new List<GameObject>();
-
-    private readonly List<SwayInstance> _treeSway = new List<SwayInstance>();
-    private readonly List<SwayInstance> _grassSway = new List<SwayInstance>();
-
-    void Start()
+    private void Start()
     {
-        BuildForest();
+        BuildBatch();
+    }
+
+    private void Update()
+    {
+        if (Camera.main == null) return;
+        _cameraPos = Camera.main.transform.position;
+
+        // Manage chunk visibility based on distance and frustum
+        UpdateChunkVisibility(_chunks, treesCullDist);
+        UpdateChunkVisibility(_grassChunks, grassCullDist);
+
+        SwayGrass();
     }
 
     [Button("Rebuild")]
-    void BuildForest()
+    public void BuildBatch()
     {
-        ClearSpawned();
-        BuildGround();
+        ClearExisting();
+        SetupGround();
 
-        var offset = new Vector3(area.x / 2f, 0, area.y / 2f);
+        int chunkX = Mathf.Max(1, area.x / chunk);
+        int chunkY = Mathf.Max(1, area.y / chunk);
 
-        List<Vector2> treePoints = BridsonsFastPDS.Sample(area, treesFrequency);
-        List<Vector2> grassPoints = BridsonsFastPDS.Sample(area, grassFrequency);
+        _chunks = new Chunk[chunkX * chunkY];
+        _grassChunks = new Chunk[chunkX * chunkY];
 
-        Debug.Log("Trees count: " + treePoints.Count);
-        Debug.Log("Grass count: " + grassPoints.Count);
+        var sw = Stopwatch.StartNew();
 
-        SpawnTrees(treePoints, offset);
-        SpawnGrass(grassPoints, offset);
-    }
+        List<Vector2> treeSamples = BridsonsFastPDS.Sample(new Vector2(area.x, area.y), treeDensity);
+        List<Vector2> grassSamples = FastJitterSampler.Sample(new Vector2(area.x, area.y), grassDensity);
 
-    void BuildGround()
-    {
-        if (_groundObject == null)
+        List<Vector2>[] treeBuckets = BucketSamplesToChunks(treeSamples, chunkX, chunkY);
+        List<Vector2>[] grassBuckets = BucketSamplesToChunks(grassSamples, chunkX, chunkY);
+
+        Transform treesParent = new GameObject("Trees_Container").transform;
+        treesParent.SetParent(transform, false);
+
+        Transform grassParent = new GameObject("Grass_Container").transform;
+        grassParent.SetParent(transform, false);
+
+        int chunkIndex = 0;
+        for (int cx = 0; cx < chunkX; cx++)
         {
-            _groundObject = new GameObject("Ground");
-            _groundObject.AddComponent<MeshFilter>();
-            _groundObject.AddComponent<MeshRenderer>();
-        }
-
-        var groundTransform = _groundObject.transform;
-        groundTransform.SetParent(_groundContainer != null ? _groundContainer : transform, false);
-
-        var offset = new Vector3(area.x / 2f, 0, area.y / 2f);
-        groundTransform.localPosition = -offset;
-        groundTransform.localRotation = Quaternion.identity;
-        groundTransform.localScale = Vector3.one;
-
-        _groundObject.GetComponent<MeshFilter>().sharedMesh = CreateGroundMesh();
-        _groundObject.GetComponent<MeshRenderer>().sharedMaterial = groundMaterial;
-        _groundObject.layer = gameObject.layer;
-    }
-
-    void SpawnTrees(List<Vector2> points, Vector3 offset)
-    {
-        if (_trees == null || _trees.Length == 0 || points.Count == 0)
-            return;
-
-        var parent = _treeContainer != null ? _treeContainer : transform;
-        int part = points.Count / _trees.Length;
-        int pIndex = 0;
-
-        for (int i = 0; i < _trees.Length; i++)
-        {
-            var tree = _trees[i];
-
-            if (tree.prefab == null)
+            for (int cy = 0; cy < chunkY; cy++)
             {
-                pIndex += part;
-                Debug.LogWarning($"ForestGenerator: tree entry {i} has no prefab assigned, skipping {part} points.");
-                continue;
-            }
+                _chunks[chunkIndex] = BuildChunkBucket(
+                    treeBuckets[chunkIndex], cx, cy, treePrefabs, treesParent, "TreeChunk"
+                );
 
-            for (int ti = 0; ti < part; ti++)
-            {
-                var point = points[pIndex++];
-                var position = new Vector3(point.x, 0, point.y) - offset;
-                var baseYaw = Random.Range(0, 360f);
-                var rotation = Quaternion.Euler(0, baseYaw, 0);
-                var scale = tree.scale * Random.Range(0.75f, 1.3f);
+                _grassChunks[chunkIndex] = BuildChunkBucket(
+                    grassBuckets[chunkIndex], cx, cy, grassPrefabs, grassParent, "GrassChunk"
+                );
 
-                var instance = Instantiate(tree.prefab, parent);
-                var instanceTransform = instance.transform;
-                instanceTransform.localPosition = position;
-                instanceTransform.localRotation = rotation;
-                instanceTransform.localScale = scale;
-                instance.name = $"{tree.prefab.name}_{ti}";
-                instance.layer = gameObject.layer;
-
-                _spawnedTrees.Add(instance);
-                _treeSway.Add(new SwayInstance
-                {
-                    transform = instanceTransform,
-                    baseYaw = baseYaw,
-                    phase = Random.Range(0f, Mathf.PI * 2f),
-                    // slightly bigger/older trees resist wind a bit more
-                    windScale = Random.Range(0.7f, 1.15f)
-                });
+                chunkIndex++;
             }
         }
+
+        sw.Stop();
+        Debug.Log($"Prefab Forest generation time: {sw.Elapsed.TotalMilliseconds} ms");
     }
 
-    void SpawnGrass(List<Vector2> points, Vector3 offset)
+    private void ClearExisting()
     {
-        if (_grass == null || _grass.Length == 0 || points.Count == 0)
-            return;
-
-        var parent = _grassContainer != null ? _grassContainer : transform;
-        int part = points.Count / _grass.Length;
-        int pIndex = 0;
-
-        for (int i = 0; i < _grass.Length; i++)
+        // Destroy existing child containers in runtime or edit mode
+        for (int i = transform.childCount - 1; i >= 0; i--)
         {
-            var grass = _grass[i];
-
-            if (grass.prefab == null)
-            {
-                pIndex += part;
-                Debug.LogWarning($"ForestGenerator: grass entry {i} has no prefab assigned, skipping {part} points.");
-                continue;
-            }
-
-            for (int ti = 0; ti < part; ti++)
-            {
-                var point = points[pIndex++];
-                var position = new Vector3(point.x, 0, point.y) - offset;
-                var baseYaw = Random.Range(0, 360f);
-                var rotation = Quaternion.Euler(0, baseYaw, 0);
-
-                var instance = Instantiate(grass.prefab, parent);
-                var instanceTransform = instance.transform;
-                instanceTransform.localPosition = position;
-                instanceTransform.localRotation = rotation;
-                instanceTransform.localScale = grass.scale;
-                instance.name = $"{grass.prefab.name}_{ti}";
-                instance.layer = gameObject.layer;
-
-                _spawnedGrass.Add(instance);
-                _grassSway.Add(new SwayInstance
-                {
-                    transform = instanceTransform,
-                    baseYaw = baseYaw,
-                    phase = Random.Range(0f, Mathf.PI * 2f),
-                    windScale = Random.Range(0.85f, 1.3f)
-                });
-            }
-        }
-    }
-
-    void Update()
-    {
-        if (!enableSway)
-            return;
-
-        float t = Time.time;
-        Vector2 wind = windDirection.sqrMagnitude > 0.0001f ? windDirection.normalized : Vector2.right;
-
-        ApplySway(_treeSway, t, wind, treeSwayAmount, windSpeed * treeSwaySpeedMultiplier);
-        ApplySway(_grassSway, t, wind, grassSwayAmount, windSpeed * grassSwaySpeedMultiplier);
-    }
-
-    void ApplySway(List<SwayInstance> instances, float t, Vector2 wind, float amount, float speed)
-    {
-        Vector3 tiltAxis = new Vector3(-wind.y, 0f, wind.x);
-
-        for (int i = 0; i < instances.Count; i++)
-        {
-            var inst = instances[i];
-
-            if (inst.transform == null)
-                continue;
-
-            float baseWave = Mathf.Sin(t * speed + inst.phase);
-            float gustWave = gustiness > 0f
-                ? Mathf.Sin(t * speed * gustSpeed + inst.phase * 0.5f) * gustiness
-                : 0f;
-
-            float sway = (baseWave + gustWave) * amount * windStrength * inst.windScale;
-
-            Quaternion windTilt = Quaternion.AngleAxis(sway, tiltAxis);
-            inst.transform.localRotation = windTilt * Quaternion.Euler(0f, inst.baseYaw, 0f);
-        }
-    }
-
-    [Button("Clear")]
-    void ClearSpawned()
-    {
-        DestroyList(_spawnedTrees);
-        DestroyList(_spawnedGrass);
-        _treeSway.Clear();
-        _grassSway.Clear();
-    }
-
-    void DestroyList(List<GameObject> list)
-    {
-        for (int i = 0; i < list.Count; i++)
-        {
-            if (list[i] == null)
-                continue;
-
+            GameObject child = transform.GetChild(i).gameObject;
             if (Application.isPlaying)
-                Destroy(list[i]);
+                Destroy(child);
             else
-                DestroyImmediate(list[i]);
+                DestroyImmediate(child);
         }
-        list.Clear();
     }
 
-    Mesh CreateGroundMesh(float cellSize = 5f)
+    private void SetupGround()
+    {
+        if (!_groundFilter) _groundFilter = gameObject.GetComponent<MeshFilter>() ?? gameObject.AddComponent<MeshFilter>();
+        if (!_groundRenderer) _groundRenderer = gameObject.GetComponent<MeshRenderer>() ?? gameObject.AddComponent<MeshRenderer>();
+
+        _groundFilter.sharedMesh = CreateGroundMesh(cellSize);
+        _groundRenderer.sharedMaterial = groundMaterial;
+    }
+
+    private List<Vector2>[] BucketSamplesToChunks(List<Vector2> samples, int chunkX, int chunkY)
+    {
+        int totalChunks = chunkX * chunkY;
+        List<Vector2>[] buckets = new List<Vector2>[totalChunks];
+        for (int i = 0; i < totalChunks; i++)
+        {
+            buckets[i] = new List<Vector2>();
+        }
+
+        for (int i = 0; i < samples.Count; i++)
+        {
+            Vector2 p = samples[i];
+            int cx = Mathf.Clamp(Mathf.FloorToInt(p.x / chunk), 0, chunkX - 1);
+            int cy = Mathf.Clamp(Mathf.FloorToInt(p.y / chunk), 0, chunkY - 1);
+
+            int chunkIndex = cx * chunkY + cy;
+            buckets[chunkIndex].Add(p);
+        }
+
+        return buckets;
+    }
+
+    private Chunk BuildChunkBucket(List<Vector2> samples, int cx, int cy, GameObject[] prefabs, Transform parent, string prefix)
+    {
+        Vector3 chunkCenter = transform.position + new Vector3((cx + 0.5f) * chunk, 0, (cy + 0.5f) * chunk);
+        GameObject chunkObj = new GameObject($"{prefix}_{cx}_{cy}");
+        chunkObj.transform.SetParent(parent, false);
+
+        Chunk newChunk = new Chunk
+        {
+            center = chunkCenter,
+            rootObject = chunkObj
+        };
+
+        if (prefabs == null || prefabs.Length == 0) return newChunk;
+
+        for (int i = 0; i < samples.Count; i++)
+        {
+            Vector3 pos = transform.position + new Vector3(samples[i].x, 0, samples[i].y);
+            GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
+
+            if (prefab == null) continue;
+
+            GameObject instance = Instantiate(prefab, pos, Quaternion.identity, chunkObj.transform);
+            newChunk.instanceTransforms.Add(instance.transform);
+        }
+
+        return newChunk;
+    }
+
+    private void UpdateChunkVisibility(Chunk[] chunks, float cullDist)
+    {
+        if (chunks == null) return;
+        float sqrCullDist = cullDist * cullDist;
+
+        for (int i = 0; i < chunks.Length; i++)
+        {
+            if (chunks[i] == null || chunks[i].rootObject == null) continue;
+
+            float sqrDistToCam = (_cameraPos - chunks[i].center).sqrMagnitude;
+            bool isFar = sqrDistToCam > sqrCullDist;
+            bool isOutsideFrustum = _frustumCulling && 
+                                    sqrDistToCam > chunk * chunk && 
+                                    IsChunkOutsideCamera(Camera.main, chunks[i].center, chunk);
+
+            bool shouldBeActive = !isFar && !isOutsideFrustum;
+
+            if (chunks[i].rootObject.activeSelf != shouldBeActive)
+            {
+                chunks[i].rootObject.SetActive(shouldBeActive);
+            }
+        }
+    }
+
+    private void SwayGrass()
+    {
+        if (_grassChunks == null) return;
+
+        float sway = Mathf.Sin(Time.time);
+        Quaternion tilt = Quaternion.Euler(sway * swayAngle, 0f, sway * swayAngle);
+
+        for (int i = 0; i < _grassChunks.Length; i++)
+        {
+            // Only update sway on visible grass chunks
+            if (_grassChunks[i] == null || !_grassChunks[i].rootObject.activeInHierarchy) continue;
+
+            for (int t = 0; t < _grassChunks[i].instanceTransforms.Count; t++)
+            {
+                Transform grassTrans = _grassChunks[i].instanceTransforms[t];
+                if (grassTrans != null)
+                {
+                    grassTrans.localRotation = tilt;
+                }
+            }
+        }
+    }
+
+    private Mesh CreateGroundMesh(float cellSize = 5f)
     {
         Mesh mesh = new Mesh();
         int cellsX = Mathf.CeilToInt(area.x / cellSize);
@@ -306,8 +253,8 @@ public class GO_ForestGenerator : MonoBehaviour
         }
 
         int[] triangles = new int[cellsX * cellsZ * 6];
-
         int tris = 0, vert = 0;
+
         for (int z = 0; z < cellsZ; z++)
         {
             for (int x = 0; x < cellsX; x++)
@@ -322,11 +269,9 @@ public class GO_ForestGenerator : MonoBehaviour
                 vert++;
                 tris += 6;
             }
-            vert++; // skip the extra vertex at the end of each row
+            vert++;
         }
 
-        // If the grid is coarse enough, verts stay under 65535 and we can use 16-bit indices
-        // (default). If it's still large, bump to 32-bit indices to avoid an overflow/wrap.
         if (verts.Length > 65535)
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
 
@@ -336,5 +281,12 @@ public class GO_ForestGenerator : MonoBehaviour
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
         return mesh;
+    }
+
+    public bool IsChunkOutsideCamera(Camera cam, Vector3 chunkCenter, float chunkSize)
+    {
+        Bounds bounds = new Bounds(chunkCenter, new Vector3(chunkSize, 4f, chunkSize));
+        Plane[] planes = GeometryUtility.CalculateFrustumPlanes(cam);
+        return !GeometryUtility.TestPlanesAABB(planes, bounds);
     }
 }

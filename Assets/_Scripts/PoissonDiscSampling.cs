@@ -16,33 +16,27 @@ public static class BridsonsFastPDS
         if (maxAttempts <= 0)
             throw new System.ArgumentOutOfRangeException(nameof(maxAttempts));
 
-        // Grid cell size.
         float cellSize = minDist / Mathf.Sqrt(2f);
 
         int gridW = Mathf.CeilToInt(sampleArea.x / cellSize);
         int gridH = Mathf.CeilToInt(sampleArea.y / cellSize);
 
-        int[,] grid = new int[gridW, gridH];
+        int[] grid = new int[gridW * gridH];
 
-        for (int x = 0; x < gridW; x++)
-            for (int y = 0; y < gridH; y++)
-            {
-                grid[x, y] = -1;
-            }
+        for (int i = 0; i < grid.Length; i++)
+            grid[i] = -1;
 
         List<Vector2> samples = new List<Vector2>();
         List<Vector2> activeList = new List<Vector2>();
 
-        Vector2 firstPoint = new Vector2(
-            sampleArea.x / 2.0f,
-            sampleArea.y / 2.0f
-        );
+        Vector2 firstPoint = new Vector2(sampleArea.x / 2.0f, sampleArea.y / 2.0f);
 
         SetSample(
             firstPoint,
             activeList,
             samples,
             grid,
+            gridW,
             cellSize
         );
 
@@ -88,6 +82,7 @@ public static class BridsonsFastPDS
                     activeList,
                     samples,
                     grid,
+                    gridW,
                     cellSize
                 );
 
@@ -95,10 +90,12 @@ public static class BridsonsFastPDS
                 break;
             }
 
-            // Couldn't find another point around this active point.
             if (!found)
-                activeList.RemoveAt(randIndex);
-
+            {
+                int lastIndex = activeList.Count - 1;
+                activeList[randIndex] = activeList[lastIndex];
+                activeList.RemoveAt(lastIndex);
+            }
         }
 
         return samples;
@@ -108,7 +105,8 @@ public static class BridsonsFastPDS
         Vector2 p,
         List<Vector2> activeList,
         List<Vector2> samples,
-        int[,] grid,
+        int[] grid,
+        int gridW,
         float cellSize)
     {
         int index = samples.Count;
@@ -119,7 +117,7 @@ public static class BridsonsFastPDS
         int cellX = Mathf.FloorToInt(p.x / cellSize);
         int cellY = Mathf.FloorToInt(p.y / cellSize);
 
-        grid[cellX, cellY] = index;
+        grid[cellX + cellY * gridW] = index;
     }
 
     private static bool IsValid(
@@ -128,11 +126,13 @@ public static class BridsonsFastPDS
         int gridH,
         float cellSize,
         float minDist,
-        int[,] grid,
+        int[] grid,
         List<Vector2> samples)
     {
         int cellX = Mathf.FloorToInt(p.x / cellSize);
         int cellY = Mathf.FloorToInt(p.y / cellSize);
+
+        float sqrMinDist = minDist * minDist;
 
         for (int x = -2; x <= 2; x++)
         {
@@ -141,23 +141,20 @@ public static class BridsonsFastPDS
                 int currX = cellX + x;
                 int currY = cellY + y;
 
-                // Ignore cells outside the grid.
                 if (currX < 0 || currX >= gridW ||
                     currY < 0 || currY >= gridH)
                 {
                     continue;
                 }
 
-                int pointIndex = grid[currX, currY];
+                int pointIndex = grid[currX + currY * gridW];
 
                 if (pointIndex == -1)
                     continue;
 
-                float sqrDist =
-                    (p - samples[pointIndex]).sqrMagnitude;
+                float sqrDist = (p - samples[pointIndex]).sqrMagnitude;
 
-                // Candidate is invalid if it's too close.
-                if (sqrDist < minDist * minDist)
+                if (sqrDist < sqrMinDist)
                     return false;
             }
         }
